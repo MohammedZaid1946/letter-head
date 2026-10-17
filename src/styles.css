@@ -490,7 +490,7 @@ button {
 
 .paper {
     width: min(100%, 520px);
-    aspect-ratio: 720/1019;
+    aspect-ratio: 595.28/841.89;
     position: relative;
     background-color: #fff;
     background-size: 100% 100%;
@@ -499,13 +499,17 @@ button {
     box-shadow: 0 5px 18px #1b2b3822;
     overflow: hidden;
     flex-shrink: 0;
-    color: #111
+    color: #111;
+    container-type: inline-size;
+    -webkit-text-size-adjust: none;
+    text-size-adjust: none
 }
 
 .preview-ref {
     position: absolute;
     font-family: Georgia, serif;
-    font-size: clamp(5px, .9vw, 8px);
+    font-size: 8px;
+    font-size: calc(100cqw * 9 / 595.28);
     font-style: italic;
     max-width: 30%;
     overflow: hidden;
@@ -517,7 +521,8 @@ button {
     position: absolute;
     top: 16.86%;
     left: 87%;
-    font-size: clamp(5px, .9vw, 8px);
+    font-size: 8px;
+    font-size: calc(100cqw * 9 / 595.28);
     color: #353535;
     white-space: nowrap
 }
@@ -531,15 +536,20 @@ button {
     color: #161616;
     line-height: 1.35;
     overflow-wrap: anywhere;
-    white-space: normal
+    white-space: normal;
+    font-size: 9px;
+    font-size: calc(100cqw * 10 / 595.28)
 }
 
 .preview-content h3 {
     font-family: Arial, sans-serif;
     font-weight: 700;
+    font-size: 11px;
+    font-size: calc(100cqw * 13 / 595.28);
     text-align: center;
     line-height: 1.25;
-    margin: 0 0 16px
+    margin: 0 0 16px;
+    margin-bottom: calc(100cqw * 14 / 595.28)
 }
 
 .preview-content .body-line {
@@ -584,13 +594,13 @@ button {
     display: block;
     width: 100%;
     height: auto;
-    max-height: 52px;
     object-fit: contain;
     pointer-events: none
 }
 
 .signature-overlay strong {
-    font-size: clamp(5px, .9vw, 8px);
+    font-size: 8px;
+    font-size: calc(100cqw * 9.5 / 595.28);
     line-height: 1.4;
     white-space: nowrap;
     max-width: 130%;
@@ -598,7 +608,8 @@ button {
 }
 
 .signature-overlay>span {
-    font-size: clamp(4px, .72vw, 6px);
+    font-size: 6px;
+    font-size: calc(100cqw * 7.5 / 595.28);
     line-height: 1.2;
     white-space: nowrap;
     max-width: 150%
@@ -1042,10 +1053,6 @@ button {
 
     .app-footer {
         padding-bottom: 16px
-    }
-
-    .signature-overlay img {
-        max-height: 42px
     }
 }
 

@@ -5,6 +5,14 @@ import { AlignLeft, CalendarDays, Check, ChevronDown, Download, FileImage, FileT
 type SignatureProfile = { id: string; name: string; designation: string; image: string };
 const DEFAULT_TEMPLATE = '/assets/letterhead-template.jpg';
 const DEFAULT_SIGNATURE = '/assets/ma-saleem-signature.png';
+// Canonical document units are PDF points. A4 is 595.28 x 841.89 pt and every
+// editable value (font size, line height, offsets) is stored in points. The
+// preview renders the page as a container and expresses those point values in
+// `cqw` (1% of the A4 page width), so the background, text, date, reference and
+// signature all scale by the exact same factor as the exported PDF.
+const A4_WIDTH_PT = 595.28;
+const A4_HEIGHT_PT = 841.89;
+const ptToPreviewSize = (pt: number) => `calc(100cqw * ${pt} / ${A4_WIDTH_PT})`;
 const today = () => new Date().toISOString().slice(0, 10);
 const initialBody = 'On behalf of the President, General Secretary, office bearers, and all members of the Telangana Amateur Body Builders and Fitness Association, Hyderabad, we extend our heartfelt wishes to Mr. George Joseph, Former Mr. India, who is currently recovering in the hospital.\n\nWe pray for his good health, strength, and a speedy recovery. May he regain his health soon and return to his normal life with renewed energy and positivity.\n\nOur thoughts and prayers are with him and his family during this time. We wish him a smooth recovery and many more healthy and happy years ahead.\n\nWishing you a speedy recovery, George Joseph Sir. Get well soon!';
 const readFile = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file); });
@@ -120,7 +128,7 @@ export default function App() {
     setExporting(true);
     try {
       const pdf = await PDFDocument.create();
-      const page = pdf.addPage([595.28, 841.89]);
+      const page = pdf.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
       const bgData = template.startsWith('data:') ? template.split(',')[1] : await (await fetch(template)).arrayBuffer();
       let bg: Awaited<ReturnType<typeof pdf.embedJpg>> | Awaited<ReturnType<typeof pdf.embedPng>>;
       if (typeof bgData === 'string') {
@@ -224,8 +232,8 @@ export default function App() {
       <section className="preview-panel"><div className="preview-heading"><div><p className="eyebrow">LIVE PREVIEW</p><h2>Document preview</h2></div><span className="page-size">A4 · Portrait</span></div><div className="preview-stage"><div className="paper" ref={pageRef} style={{backgroundImage:`url(${template})`}}>
         {reference.trim()&&<div className="preview-ref" style={{left:'30%',top:'16.7%'}}>Ref: {reference}</div>}
         <div className="preview-date"><strong>{formatDate(date)}</strong></div>
-        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${bodyTop}%`,width:`${bodyWidth}%`,fontSize:`${fontSize*0.87}px`}}>
-          {heading.trim()&&<h3 style={{fontSize:`${titleSize*0.87}px`}}>{heading}</h3>}
+        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${bodyTop}%`,width:`${bodyWidth}%`,fontSize:ptToPreviewSize(fontSize)}}>
+          {heading.trim()&&<h3 style={{fontSize:ptToPreviewSize(titleSize)}}>{heading}</h3>}
           <div className="body-lines">{bodyLines.map((line,i)=><div className="body-line" key={i}>{line}</div>)}</div>
           {closing.trim()&&<div className="closing-preview">{closing}</div>}
         </div>
