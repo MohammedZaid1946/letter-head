@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  A4_HEIGHT_PT,
   DEFAULT_BOUNDS,
   DEFAULT_LIMITS,
   DEFAULT_SETTINGS,
   DEFAULT_SIGNATURE,
+  MIN_BODY_START_PERCENT,
   STANDARD_FONTS,
   computeLayout,
   flattenBodyText,
@@ -190,5 +192,71 @@ describe('autoAdjust', () => {
     });
     const outcome = autoAdjust(config);
     expect(outcome.message).toContain('Auto-adjusted successfully');
+  });
+});
+
+describe('minimum body start boundary', () => {
+  it('never moves the body above the boundary to fit long content', () => {
+    const config = makeConfig({
+      content: { heading: '', body: longParagraph(440) },
+      settings: { ...DEFAULT_SETTINGS, bodyTopPct: MIN_BODY_START_PERCENT },
+    });
+    const outcome = autoAdjust(config);
+    expect(outcome.layout.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+    if (outcome.status === 'adjusted') {
+      expect(outcome.config.settings.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+      const first = outcome.layout.body.find((line) => !line.blank)!;
+      expect(first.topPt).toBeGreaterThanOrEqual((MIN_BODY_START_PERCENT / 100) * A4_HEIGHT_PT - 1e-6);
+    }
+  });
+
+  it('leaves a body already at the boundary untouched', () => {
+    const config = makeConfig({
+      content: { heading: '', body: longParagraph(120) },
+      settings: { ...DEFAULT_SETTINGS, bodyTopPct: MIN_BODY_START_PERCENT },
+    });
+    const outcome = autoAdjust(config);
+    expect(outcome.layout.bodyTopPct).toBe(MIN_BODY_START_PERCENT);
+  });
+
+  it('may move a body that starts below the boundary down to the boundary, never past it', () => {
+    const config = makeConfig({
+      content: { heading: '', body: longParagraph(440) },
+      settings: { ...DEFAULT_SETTINGS, bodyTopPct: 30 },
+    });
+    const outcome = autoAdjust(config);
+    expect(outcome.layout.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+    if (outcome.status === 'adjusted') {
+      expect(outcome.config.settings.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+      expect(outcome.config.settings.bodyTopPct).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it('reports overflow instead of crossing the boundary when content cannot fit', () => {
+    const config = makeConfig({
+      content: { heading: '', body: longParagraph(900) },
+      settings: { ...DEFAULT_SETTINGS, bodyTopPct: MIN_BODY_START_PERCENT },
+      signature: { ...DEFAULT_SIGNATURE, yPct: 26, aspect: 0.74 },
+    });
+    const outcome = autoAdjust(config);
+    expect(outcome.status).toBe('cannot-fit');
+    expect(outcome.config).toBe(config);
+    expect(outcome.layout.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+    expect(outcome.layout.valid).toBe(false);
+  });
+
+  it('clamps a body requested above the boundary even before evaluating fit', () => {
+    const config = makeConfig({ settings: { ...DEFAULT_SETTINGS, bodyTopPct: 10 } });
+    const outcome = autoAdjust(config);
+    expect(outcome.layout.bodyTopPct).toBe(MIN_BODY_START_PERCENT);
+  });
+
+  it('keeps preview/PDF start identical: bodyTopPt tracks bodyTopPct after adjustment', () => {
+    const config = makeConfig({ content: { heading: '', body: longParagraph(440) } });
+    const outcome = autoAdjust(config);
+    expect(outcome.layout.bodyTopPt).toBeCloseTo(
+      (outcome.layout.bodyTopPct / 100) * A4_HEIGHT_PT,
+      6,
+    );
   });
 });

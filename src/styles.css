@@ -747,7 +747,7 @@ button {
 .range-field {
     display: flex;
     flex-direction: column;
-    gap: 10px
+    gap: 4px
 }
 
 .range-field>span {
@@ -760,9 +760,71 @@ button {
     font-weight: 700
 }
 
-.range-field input[type=range] {
+.range-field em {
+    font-style: normal;
+    font-weight: 500;
+    font-size: 9px;
+    color: #9aa2a8
+}
+
+.range-slider {
+    position: relative;
     width: 100%;
-    accent-color: #2b6b56
+    height: 44px;
+    display: flex;
+    align-items: center;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none
+}
+
+.range-slider__track {
+    position: absolute;
+    left: 22px;
+    right: 22px;
+    top: 50%;
+    height: 6px;
+    margin-top: -3px;
+    border-radius: 999px;
+    background: #e2e8e5
+}
+
+.range-slider__fill {
+    height: 100%;
+    background: #2b6b56;
+    border-radius: 999px
+}
+
+.range-slider__thumb {
+    position: absolute;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: transparent;
+    touch-action: none;
+    cursor: grab;
+    outline: none
+}
+
+.range-slider__thumb::after {
+    content: '';
+    position: absolute;
+    inset: 11px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid #2b6b56;
+    box-sizing: border-box;
+    box-shadow: 0 1px 3px rgba(16, 40, 32, .28)
+}
+
+.range-slider--dragging .range-slider__thumb {
+    cursor: grabbing
+}
+
+.range-slider__thumb:focus-visible::after {
+    box-shadow: 0 0 0 3px rgba(43, 107, 86, .4)
 }
 
 .section-label {

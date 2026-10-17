@@ -38,7 +38,7 @@ and there was no single place to reason about "does this document fit?".
    priority order:
    - **P2 – paragraph spacing:** reduce to the configured floor (0 pt default). Spacing is never increased (only an existing value above the floor is lowered).
    - **P3 – line height:** reduce gradually (0.05 steps) toward the floor (1.2).
-   - **P4 – body position:** move the body up (0.5% steps) toward the configured floor (16%).
+   - **P4 – body position:** move the body up (0.5% steps) toward the configured floor, which is the hard minimum start position `MIN_BODY_START_PERCENT = 20%`. Auto Adjust never moves the body above 20%.
 3. The first font size that yields a valid layout wins; the least-aggressive valid result at
    that font size is kept.
 4. If no font size works → **"Could not fit safely"** and the configuration is left untouched.
@@ -70,7 +70,7 @@ outer iterations) and deterministic.
 | Heading font | — | — | never changed by Auto Adjust |
 | Line height | 1.2× | 1.5× | UI slider exposes 1.1–1.6× |
 | Paragraph spacing | 0 pt | 12 pt | |
-| Body top | 16% | 34% | |
+| Body top | 20% | 34% | hard minimum start position |
 
 If the current font is already below 9 pt (the UI allows 7), Auto Adjust cannot reduce it
 further and reports "Could not fit safely" instead.
@@ -116,23 +116,31 @@ reported as unfixable.
 
 ## 9. Tests added and actual results
 
-`npm test` → **30 passed (2 files)**:
+`npm test` → **46 passed (3 files)**:
 
-`documentLayout.test.ts` (14): A4 dimensions, short doc fits, blank lines preserved,
+`documentLayout.test.ts` (19): A4 dimensions, short doc fits, blank lines preserved,
 explicit line breaks preserved, paragraph spacing applied once, footer not crossed,
 body/signature collision, signature/footer collision, aspect ratio preserved, empty content,
-determinism, bold heading metric, long-word/URL wrapping, content reconstruction.
+determinism, bold heading metric, long-word/URL wrapping, content reconstruction, plus the
+minimum body-start boundary cases (clamp above 20%, exactly 20%, below 20%, `bodyTopPt`
+tracks `bodyTopPct`, first line never above the boundary).
 
-`autoAdjust.test.ts` (16): short letter unchanged, font reduced only when needed, paragraph
+`autoAdjust.test.ts` (22): short letter unchanged, font reduced only when needed, paragraph
 spacing reduced before font, line height reduced before font, min-font acceptance, never below
 min, cannot-fit leaves config untouched, footer never overlapped, text byte-for-byte unchanged,
 idempotent repeat, undo restores exact layout, no font enlargement, signature aspect preserved,
-signature collision unfixable without relocation, mobile==desktop determinism, success message.
+signature collision unfixable without relocation, mobile==desktop determinism, success message,
+and the minimum body-start boundary cases (never above 20%, stays at 20%, moves down only to
+20%, overflow instead of crossing, clamps before evaluating, preview/PDF start identical).
+
+`pdfExport.test.ts` (5): generates real PDFs with `pdf-lib`, inflates the content streams, and
+recovers the actual body `Tm` coordinate to prove the exported body starts at 20% when clamped,
+at 20%, at the requested position below 20%, after Auto Adjust, and that preview and PDF agree.
 
 ## 10. Build, lint, type-check results
 
 - `npm run typecheck` (`tsc -b`): **pass**.
-- `npm test` (`vitest run`): **30 passed**.
+- `npm test` (`vitest run`): **46 passed**.
 - `npm run build` (`tsc -b && vite build`): **pass** (only the pre-existing chunk-size warning).
 
 There is no ESLint/Prettier configuration in the repository, so no lint step was available.

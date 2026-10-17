@@ -6,6 +6,7 @@ import {
   DEFAULT_LIMITS,
   DEFAULT_SETTINGS,
   DEFAULT_SIGNATURE,
+  MIN_BODY_START_PERCENT,
   STANDARD_FONTS,
   bodyLineTexts,
   computeLayout,
@@ -108,6 +109,48 @@ describe('computeLayout', () => {
     const width = STANDARD_FONTS.bold.widthOfTextAtSize('Heading text', config.settings.headingSizePt);
     expect(width).toBeGreaterThan(0);
     expect(layout.heading.sizePt).toBe(config.settings.headingSizePt);
+  });
+});
+
+describe('minimum body start boundary', () => {
+  it('clamps a body requested above the 20% boundary up to the boundary', () => {
+    const layout = computeLayout(makeConfig({ settings: { ...DEFAULT_SETTINGS, bodyTopPct: 12 } }));
+    expect(layout.bodyTopPct).toBe(MIN_BODY_START_PERCENT);
+    expect(layout.bodyTopPt).toBeCloseTo((MIN_BODY_START_PERCENT / 100) * A4_HEIGHT_PT, 6);
+    expect(layout.heading.topPt).toBeCloseTo(layout.bodyTopPt, 6);
+  });
+
+  it('keeps a body that starts exactly at the boundary', () => {
+    const layout = computeLayout(
+      makeConfig({ settings: { ...DEFAULT_SETTINGS, bodyTopPct: MIN_BODY_START_PERCENT } }),
+    );
+    expect(layout.bodyTopPct).toBe(MIN_BODY_START_PERCENT);
+    expect(layout.bodyTopPt).toBeCloseTo((MIN_BODY_START_PERCENT / 100) * A4_HEIGHT_PT, 6);
+  });
+
+  it('leaves a body that starts below the boundary unchanged', () => {
+    const layout = computeLayout(makeConfig({ settings: { ...DEFAULT_SETTINGS, bodyTopPct: 28 } }));
+    expect(layout.bodyTopPct).toBe(28);
+    expect(layout.bodyTopPt).toBeCloseTo((28 / 100) * A4_HEIGHT_PT, 6);
+  });
+
+  it('always reports bodyTopPt consistent with bodyTopPct (preview/PDF agree)', () => {
+    for (const top of [8, 12, 20, 20.5, 25, 34]) {
+      const layout = computeLayout(makeConfig({ settings: { ...DEFAULT_SETTINGS, bodyTopPct: top } }));
+      expect(layout.bodyTopPct).toBeGreaterThanOrEqual(MIN_BODY_START_PERCENT);
+      expect(layout.bodyTopPt).toBeCloseTo((layout.bodyTopPct / 100) * A4_HEIGHT_PT, 6);
+    }
+  });
+
+  it('never lets the first body line start above the boundary', () => {
+    const layout = computeLayout(
+      makeConfig({
+        content: { heading: '', body: 'First line\nSecond line' },
+        settings: { ...DEFAULT_SETTINGS, bodyTopPct: 5 },
+      }),
+    );
+    const firstLine = layout.body.find((line) => !line.blank)!;
+    expect(firstLine.topPt).toBeGreaterThanOrEqual((MIN_BODY_START_PERCENT / 100) * A4_HEIGHT_PT - 1e-6);
   });
 });
 

@@ -15,6 +15,16 @@ import { Encodings, Font, FontNames, type EncodingType } from '@pdf-lib/standard
 export const A4_WIDTH_PT = 595.28;
 export const A4_HEIGHT_PT = 841.89;
 
+/**
+ * Hard layout constraint: the body may never start above this percentage of the
+ * page height, measured from the top edge. This is an absolute boundary (not a
+ * preference) and is enforced centrally in `computeLayout`, so the live preview,
+ * Auto Adjust and the PDF exporter all agree. Auto Adjust must never move the
+ * body above this line to force a fit; if the content cannot fit at or below it,
+ * the layout is reported as overflow instead.
+ */
+export const MIN_BODY_START_PERCENT = 20;
+
 export const HEADING_LINE_HEIGHT = 1.25;
 export const HEADING_GAP_PT = 14;
 export const SIGNATURE_NAME_SIZE_PT = 9.5;
@@ -149,7 +159,8 @@ export const DEFAULT_LIMITS: LayoutLimits = {
   maxLineHeight: 1.5,
   minParagraphSpacingPt: 0,
   maxParagraphSpacingPt: 12,
-  minBodyTopPct: 16,
+  // The body's preferred travel floor is the hard minimum start position.
+  minBodyTopPct: MIN_BODY_START_PERCENT,
   maxBodyTopPct: 34,
 };
 
@@ -280,7 +291,10 @@ export function computeLayout(config: LayoutConfig, fonts: MeasurementFonts = ST
 
   const bodyLeftPt = (settings.bodyLeftPct / 100) * W;
   const bodyWidthPt = (settings.bodyWidthPct / 100) * W;
-  const bodyTopPt = (settings.bodyTopPct / 100) * H;
+  // Hard constraint: clamp the requested start position to the minimum. The body
+  // top is measured from the top edge of the page in both the preview and the PDF.
+  const bodyTopPct = Math.max(settings.bodyTopPct, MIN_BODY_START_PERCENT);
+  const bodyTopPt = (bodyTopPct / 100) * H;
   const lineAdvancePt = settings.fontSizePt * settings.lineHeight;
 
   // Heading
@@ -393,7 +407,7 @@ export function computeLayout(config: LayoutConfig, fonts: MeasurementFonts = ST
     headingSizePt: settings.headingSizePt,
     lineHeight: settings.lineHeight,
     paragraphSpacingPt: settings.paragraphSpacingPt,
-    bodyTopPct: settings.bodyTopPct,
+    bodyTopPct,
     bodyLeftPt,
     bodyWidthPt,
     bodyTopPt,

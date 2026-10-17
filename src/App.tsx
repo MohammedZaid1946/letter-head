@@ -6,15 +6,26 @@ import {
   A4_WIDTH_PT,
   DEFAULT_BOUNDS,
   DEFAULT_LIMITS,
+  MIN_BODY_START_PERCENT,
   computeLayout,
   type LayoutConfig,
 } from './lib/documentLayout';
 import { autoAdjust, formatAdjustment } from './lib/autoAdjust';
+import RangeSlider, { type SliderChange } from './components/RangeSlider';
 
 type SignatureProfile = { id: string; name: string; designation: string; image: string };
 type Tone = 'ok' | 'info' | 'warn';
 type AdjustStatus = { tone: Tone; title: string; details: string[] };
-type LayoutSnapshot = { fontPt: number; lineHeight: number; paragraphSpacingPt: number; bodyTopPct: number };
+type LayoutState = {
+  bodyTop: number; bodyLeft: number; bodyWidth: number;
+  fontSize: number; titleSize: number; lineHeight: number; paragraphSpacing: number;
+  sigX: number; sigY: number; sigWidth: number;
+};
+const DEFAULT_LAYOUT_STATE: LayoutState = {
+  bodyTop: 21.5, bodyLeft: 33.5, bodyWidth: 63,
+  fontSize: 10.5, titleSize: 13, lineHeight: 1.35, paragraphSpacing: 0,
+  sigX: 80, sigY: 74, sigWidth: 13,
+};
 
 const DEFAULT_TEMPLATE = '/assets/letterhead-template.jpg';
 const DEFAULT_SIGNATURE_SRC = '/assets/ma-saleem-signature.png';
@@ -58,7 +69,7 @@ export default function App() {
   const [titleSize, setTitleSize] = useState(13);
   const [lineHeight, setLineHeight] = useState(1.35);
   const [paragraphSpacing, setParagraphSpacing] = useState(0);
-  const [autoAdjustSnapshot, setAutoAdjustSnapshot] = useState<LayoutSnapshot | null>(null);
+  const [layoutHistory, setLayoutHistory] = useState<LayoutState[]>([]);
   const [adjustStatus, setAdjustStatus] = useState<AdjustStatus | null>(null);
   const [showLayout, setShowLayout] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -119,12 +130,52 @@ export default function App() {
   const layout = useMemo(() => computeLayout(layoutConfig), [layoutConfig]);
   const layoutIssues = useMemo(() => {
     const issues: string[] = [];
+    if (bodyTop < MIN_BODY_START_PERCENT) issues.push(`Body start (${bodyTop.toFixed(1)}%) is above the ${MIN_BODY_START_PERCENT}% minimum start position and will be clamped.`);
     if (layout.overflowPt > 0) issues.push('The body may run close to, or into, the protected footer.');
     for (const collision of layout.collisions) issues.push(collision.detail);
     return issues;
-  }, [layout]);
+  }, [layout, bodyTop]);
 
-  const clearAutoAdjustState = () => { setAutoAdjustSnapshot(null); setAdjustStatus(null); };
+  const currentLayout = (): LayoutState => ({ bodyTop, bodyLeft, bodyWidth, fontSize, titleSize, lineHeight, paragraphSpacing, sigX, sigY, sigWidth });
+  const applyLayoutState = (state: LayoutState) => {
+    setBodyTop(state.bodyTop); setBodyLeft(state.bodyLeft); setBodyWidth(state.bodyWidth);
+    setFontSize(state.fontSize); setTitleSize(state.titleSize); setLineHeight(state.lineHeight);
+    setParagraphSpacing(state.paragraphSpacing); setSigX(state.sigX); setSigY(state.sigY); setSigWidth(state.sigWidth);
+  };
+  const pushLayoutHistory = (previous: LayoutState) => setLayoutHistory((prev) => [...prev, previous].slice(-50));
+  const undoLayoutChange = () => {
+    if (layoutHistory.length === 0) return;
+    applyLayoutState(layoutHistory[layoutHistory.length - 1]);
+    setLayoutHistory((prev) => prev.slice(0, -1));
+    setAdjustStatus({ tone: 'info', title: 'Restored previous layout', details: [] });
+  };
+  const resetLayout = () => {
+    pushLayoutHistory(currentLayout());
+    applyLayoutState(DEFAULT_LAYOUT_STATE);
+    setAdjustStatus(null);
+  };
+
+  // A slider commits only when the user drags the thumb (or uses the keyboard);
+  // track clicks never fire this. Preview changes stay live, history is pushed
+  // once per committed interaction.
+  const onSliderChange = <K extends keyof LayoutState,>(key: K, setValue: (n: number) => void) => (change: SliderChange) => {
+    if (change.committed && !change.cancelled && change.value !== change.fromValue) {
+      pushLayoutHistory({ ...currentLayout(), [key]: change.fromValue } as LayoutState);
+      setAdjustStatus(null);
+    }
+    setValue(change.value);
+  };
+  const onNumberChange = <K extends keyof LayoutState,>(key: K, setValue: (n: number) => void, lo: number, hi: number) => (event: ChangeEvent<HTMLInputElement>) => {
+    const parsed = Number(event.target.value);
+    if (Number.isNaN(parsed)) return;
+    const next = Math.min(hi, Math.max(lo, parsed));
+    const previous = currentLayout()[key];
+    if (next !== previous) {
+      pushLayoutHistory({ ...currentLayout(), [key]: previous } as LayoutState);
+      setAdjustStatus(null);
+    }
+    setValue(next);
+  };
 
   const runAutoAdjust = () => {
     const outcome = autoAdjust(layoutConfig);
@@ -136,23 +187,13 @@ export default function App() {
       setAdjustStatus({ tone: 'warn', title: 'Could not fit safely', details: [outcome.message] });
       return;
     }
-    setAutoAdjustSnapshot({ fontPt: fontSize, lineHeight, paragraphSpacingPt: paragraphSpacing, bodyTopPct: bodyTop });
+    pushLayoutHistory(currentLayout());
     const next = outcome.config.settings;
     setFontSize(next.fontSizePt);
     setLineHeight(next.lineHeight);
     setParagraphSpacing(next.paragraphSpacingPt);
     setBodyTop(next.bodyTopPct);
     setAdjustStatus({ tone: 'ok', title: 'Auto-adjusted successfully', details: outcome.adjustments.map(formatAdjustment) });
-  };
-
-  const undoAutoAdjust = () => {
-    if (!autoAdjustSnapshot) return;
-    setFontSize(autoAdjustSnapshot.fontPt);
-    setLineHeight(autoAdjustSnapshot.lineHeight);
-    setParagraphSpacing(autoAdjustSnapshot.paragraphSpacingPt);
-    setBodyTop(autoAdjustSnapshot.bodyTopPct);
-    setAutoAdjustSnapshot(null);
-    setAdjustStatus({ tone: 'info', title: 'Restored previous layout', details: [] });
   };
 
   const onTemplateUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -278,17 +319,17 @@ export default function App() {
         {activeTab==='layout' && <div className="form-section">
           <div className="layout-intro"><strong>Fine-tune the overlay</strong><p>Adjust these settings until the content fits the blank area on your letterhead, or let Auto Adjust do it for you.</p></div>
           <button className="primary-button full-button auto-adjust-button" onClick={runAutoAdjust}><Sparkles size={15}/> Auto Adjust to fit content</button>
-          <label className="range-field"><span>Body starts from top <b>{bodyTop.toFixed(1)}%</b></span><input type="range" min="16" max="34" step="0.5" value={bodyTop} onChange={e=>{setBodyTop(Number(e.target.value));clearAutoAdjustState();}}/></label>
-          <label className="range-field"><span>Left margin <b>{bodyLeft.toFixed(1)}%</b></span><input type="range" min="25" max="40" step="0.5" value={bodyLeft} onChange={e=>{setBodyLeft(Number(e.target.value));clearAutoAdjustState();}}/></label>
-          <label className="range-field"><span>Body width <b>{bodyWidth}%</b></span><input type="range" min="45" max="68" step="1" value={bodyWidth} onChange={e=>{setBodyWidth(Number(e.target.value));clearAutoAdjustState();}}/></label>
-          <label className="range-field"><span>Line spacing <b>{lineHeight.toFixed(2)}×</b></span><input type="range" min="1.1" max="1.6" step="0.05" value={lineHeight} onChange={e=>{setLineHeight(Number(e.target.value));clearAutoAdjustState();}}/></label>
-          <label className="range-field"><span>Paragraph spacing <b>{paragraphSpacing.toFixed(1)} pt</b></span><input type="range" min="0" max="12" step="0.5" value={paragraphSpacing} onChange={e=>{setParagraphSpacing(Number(e.target.value));clearAutoAdjustState();}}/></label>
-          <div className="two-col"><label className="field"><span>Body font (pt)</span><input type="number" min="7" max="14" step="0.5" value={fontSize} onChange={e=>{setFontSize(Math.min(14,Math.max(7,Number(e.target.value)||7)));clearAutoAdjustState();}}/></label><label className="field"><span>Heading font (pt)</span><input type="number" min="9" max="20" step="0.5" value={titleSize} onChange={e=>setTitleSize(Math.min(20,Math.max(9,Number(e.target.value)||9)))}/></label></div>
+          <div className="range-field"><span id="range-body-top">Body starts from top <b>{bodyTop.toFixed(1)}%</b> <em>min {MIN_BODY_START_PERCENT}%</em></span><RangeSlider labelId="range-body-top" value={Math.max(bodyTop, MIN_BODY_START_PERCENT)} min={MIN_BODY_START_PERCENT} max={34} step={0.5} onChange={onSliderChange('bodyTop', setBodyTop)} formatValue={v=>`${v} percent from top`}/></div>
+          <div className="range-field"><span id="range-body-left">Left margin <b>{bodyLeft.toFixed(1)}%</b></span><RangeSlider labelId="range-body-left" value={bodyLeft} min={25} max={40} step={0.5} onChange={onSliderChange('bodyLeft', setBodyLeft)} formatValue={v=>`${v} percent`}/></div>
+          <div className="range-field"><span id="range-body-width">Body width <b>{bodyWidth}%</b></span><RangeSlider labelId="range-body-width" value={bodyWidth} min={45} max={68} step={1} onChange={onSliderChange('bodyWidth', setBodyWidth)} formatValue={v=>`${v} percent`}/></div>
+          <div className="range-field"><span id="range-line-height">Line spacing <b>{lineHeight.toFixed(2)}×</b></span><RangeSlider labelId="range-line-height" value={lineHeight} min={1.1} max={1.6} step={0.05} onChange={onSliderChange('lineHeight', setLineHeight)} formatValue={v=>`${v} times`}/></div>
+          <div className="range-field"><span id="range-paragraph-spacing">Paragraph spacing <b>{paragraphSpacing.toFixed(1)} pt</b></span><RangeSlider labelId="range-paragraph-spacing" value={paragraphSpacing} min={0} max={12} step={0.5} onChange={onSliderChange('paragraphSpacing', setParagraphSpacing)} formatValue={v=>`${v} points`}/></div>
+          <div className="two-col"><label className="field"><span>Body font (pt)</span><input type="number" min="7" max="14" step="0.5" value={fontSize} onChange={onNumberChange('fontSize', setFontSize, 7, 14)}/></label><label className="field"><span>Heading font (pt)</span><input type="number" min="9" max="20" step="0.5" value={titleSize} onChange={onNumberChange('titleSize', setTitleSize, 9, 20)}/></label></div>
           <div className="section-label">SIGNATURE POSITION</div>
-          <label className="range-field"><span>Horizontal position <b>{sigX.toFixed(0)}%</b></span><input type="range" min="48" max="87" value={sigX} onChange={e=>setSigX(Number(e.target.value))}/></label>
-          <label className="range-field"><span>Vertical position <b>{sigY.toFixed(0)}%</b></span><input type="range" min="60" max="89" value={sigY} onChange={e=>setSigY(Number(e.target.value))}/></label>
-          <label className="range-field"><span>Signature width <b>{sigWidth}%</b></span><input type="range" min="8" max="22" value={sigWidth} onChange={e=>setSigWidth(Number(e.target.value))}/></label>
-          <button className="secondary-button full-button" onClick={()=>{setBodyTop(21.5);setBodyLeft(33.5);setBodyWidth(63);setFontSize(10.5);setTitleSize(13);setLineHeight(1.35);setParagraphSpacing(0);setSigX(80);setSigY(74);setSigWidth(13);clearAutoAdjustState();}}>Reset layout to defaults</button>
+          <div className="range-field"><span id="range-sig-x">Horizontal position <b>{sigX.toFixed(0)}%</b></span><RangeSlider labelId="range-sig-x" value={sigX} min={48} max={87} step={1} onChange={onSliderChange('sigX', setSigX)} formatValue={v=>`${v} percent`}/></div>
+          <div className="range-field"><span id="range-sig-y">Vertical position <b>{sigY.toFixed(0)}%</b></span><RangeSlider labelId="range-sig-y" value={sigY} min={60} max={89} step={1} onChange={onSliderChange('sigY', setSigY)} formatValue={v=>`${v} percent`}/></div>
+          <div className="range-field"><span id="range-sig-width">Signature width <b>{sigWidth}%</b></span><RangeSlider labelId="range-sig-width" value={sigWidth} min={8} max={22} step={1} onChange={onSliderChange('sigWidth', setSigWidth)} formatValue={v=>`${v} percent`}/></div>
+          <button className="secondary-button full-button" onClick={resetLayout}>Reset layout to defaults</button>
         </div>}
         <div className="editor-footer"><span><span className="privacy-dot"/> Runs in your browser</span><button className="text-button" onClick={()=>setShowLayout(v=>!v)}>{showLayout?'Hide':'Show'} layout notes</button></div>
         {showLayout&&<div className="layout-notes"><strong>Template note</strong><p>The starter letterhead is cropped from the image you supplied to remove the black bars around the page. Since it is a scan, text and logos are raster artwork. For the sharpest print result, replace it with a clean, blank, high-resolution scan or original PDF artwork converted to an image.</p></div>}
@@ -296,13 +337,13 @@ export default function App() {
       <section className="preview-panel"><div className="preview-heading"><div><p className="eyebrow">LIVE PREVIEW</p><h2>Document preview</h2></div><span className="page-size">A4 · Portrait</span></div><div className="preview-stage"><div className="paper" ref={pageRef} style={{backgroundImage:`url(${template})`}}>
         {reference.trim()&&<div className="preview-ref" style={{left:'30%',top:'16.7%'}}>Ref: {reference}</div>}
         <div className="preview-date"><strong>{formatDate(date)}</strong></div>
-        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${bodyTop}%`,width:`${bodyWidth}%`,fontSize:ptToPreviewSize(fontSize),lineHeight}}>
+        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${layout.bodyTopPct}%`,width:`${bodyWidth}%`,fontSize:ptToPreviewSize(fontSize),lineHeight}}>
           {layout.heading.lines.length>0&&<div className="preview-heading-lines" style={{fontSize:ptToPreviewSize(titleSize),lineHeight:1.25,marginBottom:ptToPreviewSize(HEADING_GAP_PT)}}>{layout.heading.lines.map((line,i)=><div className="preview-heading-line" key={i}>{line}</div>)}</div>}
           <div className="body-lines">{layout.body.map((line,i)=><div className="body-line" key={i} style={line.spacingBeforePt>0?{marginTop:ptToPreviewSize(line.spacingBeforePt)}:undefined}>{line.text===''?'\u00A0':line.text}</div>)}</div>
         </div>
         {signatureImage&&<div ref={sigRef} className={`signature-overlay ${dragging?'dragging':''}`} style={{left:`${sigX}%`,top:`${sigY}%`,width:`${sigWidth}%`}} onPointerDown={startDrag} onPointerMove={moveSignature} onPointerUp={()=>setDragging(false)} onPointerCancel={()=>setDragging(false)} title="Drag to reposition signature"><img src={signatureImage} alt="Signature"/><strong>{signatory}</strong><span>{designation}</span><div className="drag-chip"><Move size={10}/> Drag</div></div>}
       </div></div>
-      <div className="preview-controls"><div className="preview-actions"><button className="secondary-button auto-adjust-button" onClick={runAutoAdjust}><Sparkles size={15}/> Auto Adjust</button>{autoAdjustSnapshot&&<button className="text-button undo-button" onClick={undoAutoAdjust}><Undo2 size={14}/> Undo Auto Adjust</button>}</div><button className="primary-button export-wide" onClick={exportPdf} disabled={exporting}><Download size={16}/>{exporting?'Generating PDF…':'Download print-ready PDF'}</button></div>
+      <div className="preview-controls"><div className="preview-actions"><button className="secondary-button auto-adjust-button" onClick={runAutoAdjust}><Sparkles size={15}/> Auto Adjust</button>{layoutHistory.length>0&&<button className="text-button undo-button" onClick={undoLayoutChange}><Undo2 size={14}/> Undo</button>}</div><button className="primary-button export-wide" onClick={exportPdf} disabled={exporting}><Download size={16}/>{exporting?'Generating PDF…':'Download print-ready PDF'}</button></div>
       {adjustStatus&&<div className={`adjust-status ${adjustStatus.tone}`}><strong>{adjustStatus.title}</strong>{adjustStatus.details.length>0&&<ul>{adjustStatus.details.map((d,i)=><li key={i}>{d}</li>)}</ul>}</div>}
       <div className="preview-disclaimer"><span className="info-dot">i</span><p>Preview is scaled to fit your screen. Always open the exported PDF once before printing to verify text fit, date placement, and signature alignment.</p></div></section>
     </main>

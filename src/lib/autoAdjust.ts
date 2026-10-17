@@ -1,5 +1,6 @@
 import {
   computeLayout,
+  MIN_BODY_START_PERCENT,
   type LayoutConfig,
   type LayoutResult,
   type LayoutSettings,
@@ -75,8 +76,10 @@ function searchAtFontSize(
     if (layout.valid) return { settings, layout };
   }
 
-  // Priority 4 — move the body up within its configured bounds.
-  const minBodyTop = Math.min(limits.minBodyTopPct, settings.bodyTopPct);
+  // Priority 4 — move the body up, but never above the hard minimum start
+  // position. If the content cannot fit at or below that line, Auto Adjust
+  // reports overflow instead of crossing the boundary.
+  const minBodyTop = Math.max(limits.minBodyTopPct, MIN_BODY_START_PERCENT);
   if (settings.bodyTopPct > minBodyTop + EPSILON) {
     for (
       let top = round1(settings.bodyTopPct - BODY_TOP_STEP_PCT);
