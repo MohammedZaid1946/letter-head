@@ -144,11 +144,11 @@ export const DEFAULT_SETTINGS: LayoutSettings = {
 };
 
 export const DEFAULT_SIGNATURE: SignatureSettings = {
-  xPct: 80,
-  yPct: 74,
+  xPct: 77,
+  yPct: 82,
   widthPct: 13,
-  name: 'MA Saleem',
-  designation: 'General Secretary TABBFAH',
+  name: '',
+  designation: '',
   aspect: null,
 };
 

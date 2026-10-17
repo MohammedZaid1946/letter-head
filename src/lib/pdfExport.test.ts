@@ -120,4 +120,32 @@ describe('PDF export body start boundary', () => {
     const top = await exportFirstBodyTopPt(config);
     expect(top).toBeCloseTo(layout.bodyTopPt, 2);
   });
+
+  it('exports no text at all when heading and body are empty', async () => {
+    const config = makeConfig({ content: { heading: '', body: '' } });
+    const layout = computeLayout(config);
+    expect(layout.heading.lines).toHaveLength(0);
+    expect(layout.body.filter((line) => !line.blank)).toHaveLength(0);
+
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const height = page.getHeight();
+    layout.heading.lines.forEach((line, index) =>
+      page.drawText(line, {
+        x: layout.bodyLeftPt,
+        y: height - layout.heading.topPt - index * layout.heading.lineAdvancePt - layout.headingSizePt,
+        size: layout.headingSizePt,
+        font,
+      }),
+    );
+    for (const line of layout.body) {
+      if (line.blank) continue;
+      page.drawText(line.text, { x: layout.bodyLeftPt, y: height - line.topPt - layout.fontSizePt, size: layout.fontSizePt, font });
+    }
+
+    const content = decodeStreams(await pdf.save());
+    expect(content).not.toMatch(/Tj/);
+    expect(content).not.toContain('Enter your letter content');
+  });
 });

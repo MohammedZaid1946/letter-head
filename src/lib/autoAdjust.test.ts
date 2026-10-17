@@ -35,6 +35,14 @@ describe('autoAdjust', () => {
     expect(outcome.config).toBe(config);
   });
 
+  it('already fits when the letter is empty', () => {
+    const config = makeConfig({ content: { heading: '', body: '' } });
+    const outcome = autoAdjust(config);
+    expect(outcome.status).toBe('already-fits');
+    expect(outcome.adjustments).toHaveLength(0);
+    expect(outcome.layout.valid).toBe(true);
+  });
+
   it('reduces font size only when needed and reports the change', () => {
     const config = makeConfig({ content: { heading: '', body: longParagraph(440) } });
     const outcome = autoAdjust(config);

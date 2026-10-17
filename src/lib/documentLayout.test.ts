@@ -98,6 +98,13 @@ describe('computeLayout', () => {
     expect(layout.heading.lines).toHaveLength(0);
   });
 
+  it('renders no visible lines for empty heading and body', () => {
+    const layout = computeLayout(makeConfig({ content: { heading: '', body: '' } }));
+    expect(layout.heading.lines).toHaveLength(0);
+    expect(layout.body.filter((line) => !line.blank)).toHaveLength(0);
+    expect(bodyLineTexts(layout)).toHaveLength(0);
+  });
+
   it('is deterministic for identical input', () => {
     const config = makeConfig({ content: { heading: 'Hi', body: paragraphBody(4) } });
     expect(JSON.stringify(computeLayout(config))).toBe(JSON.stringify(computeLayout(config)));

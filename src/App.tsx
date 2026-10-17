@@ -34,8 +34,6 @@ const HEADING_GAP_PT = 14;
 // container and expresses point values in `cqw` (1% of the A4 page width), so
 // every element scales by the exact same factor as the exported PDF.
 const ptToPreviewSize = (pt: number) => `calc(100cqw * ${pt} / ${A4_WIDTH_PT})`;
-const today = () => new Date().toISOString().slice(0, 10);
-const initialBody = 'On behalf of the President, General Secretary, office bearers, and all members of the Telangana Amateur Body Builders and Fitness Association, Hyderabad, we extend our heartfelt wishes to Mr. George Joseph, Former Mr. India, who is currently recovering in the hospital.\n\nWe pray for his good health, strength, and a speedy recovery. May he regain his health soon and return to his normal life with renewed energy and positivity.\n\nOur thoughts and prayers are with him and his family during this time. We wish him a smooth recovery and many more healthy and happy years ahead.\n\nWishing you a speedy recovery, George Joseph Sir. Get well soon!';
 const readFile = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file); });
 const imageFrom = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src; });
 const normalizeImage = async (file: File, png: boolean) => {
@@ -50,15 +48,15 @@ export default function App() {
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
   const [templateName, setTemplateName] = useState('Association letterhead image');
   const [reference, setReference] = useState('');
-  const [date, setDate] = useState(today());
-  const [heading, setHeading] = useState('Best Wishes for a Speedy Recovery');
-  const [body, setBody] = useState(initialBody);
+  const [date, setDate] = useState('');
+  const [heading, setHeading] = useState('');
+  const [body, setBody] = useState('');
   const [profiles, setProfiles] = useState<SignatureProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState('');
   const [signatureImage, setSignatureImage] = useState('');
   const [signatureAspect, setSignatureAspect] = useState<number | null>(null);
-  const [signatory, setSignatory] = useState('MA Saleem');
-  const [designation, setDesignation] = useState('General Secretary TABBFAH');
+  const [signatory, setSignatory] = useState('');
+  const [designation, setDesignation] = useState('');
   const [sigX, setSigX] = useState(80);
   const [sigY, setSigY] = useState(74);
   const [sigWidth, setSigWidth] = useState(13);
@@ -84,15 +82,14 @@ export default function App() {
       const saved = localStorage.getItem('letterhead-signature-profiles-v1');
       if (saved) {
         const parsed: SignatureProfile[] = JSON.parse(saved);
+        // Keep reusable profiles available, but never prefill the letter's
+        // signatory fields for a new letter.
         setProfiles(parsed);
-        if (parsed.length) {
-          const first = parsed[0]; setSelectedProfile(first.id); setSignatureImage(first.image); setSignatory(first.name); setDesignation(first.designation);
-        }
       } else {
         // A signature crop was provided in the conversation. Offer it as a starter profile.
         fetch(DEFAULT_SIGNATURE_SRC).then(r => r.blob()).then(blob => readFile(new File([blob], 'ma-saleem-signature.png', {type:'image/png'}))).then(image => {
           const starter = { id: 'ma-saleem-starter', name: 'MA Saleem', designation: 'General Secretary TABBFAH', image };
-          setProfiles([starter]); setSelectedProfile(starter.id); setSignatureImage(starter.image);
+          setProfiles([starter]);
           localStorage.setItem('letterhead-signature-profiles-v1', JSON.stringify([starter]));
         }).catch(() => undefined);
       }
@@ -282,10 +279,16 @@ export default function App() {
         const data = signatureImage.split(',')[1]; const bytes = Uint8Array.from(atob(data), c=>c.charCodeAt(0));
         const embedded = signatureImage.startsWith('data:image/png') ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
         page.drawImage(embedded, { x:sig.xPt, y:H-sig.topPt-sig.heightPt, width:sig.widthPt, height:sig.heightPt });
-        const nameWidth = bold.widthOfTextAtSize(sig.name.text, sig.name.sizePt);
-        const desWidth = regular.widthOfTextAtSize(sig.designation.text, sig.designation.sizePt);
-        page.drawText(sig.name.text, { x:sig.xPt+Math.max(0,(sig.widthPt-nameWidth)/2), y:H-sig.name.bottomPt, size:sig.name.sizePt, font:bold, color:rgb(.05,.05,.05) });
-        page.drawText(sig.designation.text, { x:sig.xPt+Math.max(0,(sig.widthPt-desWidth)/2), y:H-sig.designation.bottomPt, size:sig.designation.sizePt, font:regular, color:rgb(.05,.05,.05) });
+        const nameText = sig.name.text.trim();
+        const designationText = sig.designation.text.trim();
+        if (nameText) {
+          const nameWidth = bold.widthOfTextAtSize(nameText, sig.name.sizePt);
+          page.drawText(nameText, { x:sig.xPt+Math.max(0,(sig.widthPt-nameWidth)/2), y:H-sig.name.bottomPt, size:sig.name.sizePt, font:bold, color:rgb(.05,.05,.05) });
+        }
+        if (designationText) {
+          const desWidth = regular.widthOfTextAtSize(designationText, sig.designation.sizePt);
+          page.drawText(designationText, { x:sig.xPt+Math.max(0,(sig.widthPt-desWidth)/2), y:H-sig.designation.bottomPt, size:sig.designation.sizePt, font:regular, color:rgb(.05,.05,.05) });
+        }
       }
 
       const bytes = await pdf.save(); const blob = new Blob([bytes as BlobPart], {type:'application/pdf'}); const url=URL.createObjectURL(blob);
@@ -302,16 +305,16 @@ export default function App() {
         <div className="template-card"><div className="template-icon"><FileImage size={21}/></div><div className="template-info"><strong>Letterhead template</strong><span title={templateName}>{templateName}</span></div><label className="secondary-button upload-button"><Upload size={15}/> Replace<input type="file" accept="image/png,image/jpeg,image/webp" onChange={onTemplateUpload} hidden/></label></div>
         <div className="tabs"><button className={activeTab==='content'?'active':''} onClick={()=>setActiveTab('content')}><AlignLeft size={15}/> Content</button><button className={activeTab==='signature'?'active':''} onClick={()=>setActiveTab('signature')}><Signature size={15}/> Signature</button><button className={activeTab==='layout'?'active':''} onClick={()=>setActiveTab('layout')}><Move size={15}/> Layout</button></div>
         {activeTab==='content' && <div className="form-section">
-          <div className="two-col"><label className="field"><span>Reference number <em>Optional</em></span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="e.g. TABBFAH/2026/014"/></label><label className="field"><span><CalendarDays size={14}/> Date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label></div>
-          <label className="field"><span>Subject / heading</span><input value={heading} onChange={e=>setHeading(e.target.value)} placeholder="Enter letter heading"/></label>
-          <label className="field"><span>Letter body <em>{body.length} characters</em></span><textarea value={body} onChange={e=>setBody(e.target.value)} rows={10} placeholder="Write the letter body. Separate paragraphs with a blank line."/></label>
+          <div className="two-col"><label className="field"><span>Reference number <em>Optional</em></span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Enter reference number"/></label><label className="field"><span><CalendarDays size={14}/> Date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label></div>
+          <label className="field"><span>Subject / heading</span><input value={heading} onChange={e=>setHeading(e.target.value)} placeholder="Enter letter subject"/></label>
+          <label className="field"><span>Letter body <em>{body.length} characters</em></span><textarea value={body} onChange={e=>setBody(e.target.value)} rows={10} placeholder="Enter your letter content here... Separate paragraphs with a blank line."/></label>
           {layoutIssues.length>0 && <div className="warning"><span>!</span><div><strong>Possible content overflow</strong><p>{layoutIssues.join(' ')} Use Auto Adjust or review the Layout settings.</p></div></div>}
           <div className="inline-hint"><Check size={15}/> Paragraphs wrap automatically. The original template artwork is not edited.</div>
         </div>}
         {activeTab==='signature' && <div className="form-section">
           <label className="field"><span>Reusable signature profile</span><div className="select-wrap"><select value={selectedProfile} onChange={e=>chooseProfile(e.target.value)}><option value="">Use a one-time signature</option>{profiles.map(p=><option key={p.id} value={p.id}>{p.name} — {p.designation}</option>)}</select><ChevronDown size={16}/></div></label>
           <div className="signature-upload-area">{signatureImage?<><div className="sig-preview"><img src={signatureImage} alt="Signature preview"/></div><div className="sig-file-meta"><strong>Signature loaded</strong><span>Transparent PNG recommended</span></div><button className="icon-button danger" title="Remove signature" onClick={()=>{setSignatureImage('');setSelectedProfile('')}}><Trash2 size={16}/></button></>:<><div className="upload-symbol"><ImagePlus size={22}/></div><strong>Upload handwritten signature</strong><span>PNG, JPEG or WebP</span></>}<label className="secondary-button choose-file"><Upload size={15}/> {signatureImage?'Change signature':'Choose image'}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={onSignatureUpload} hidden/></label></div>
-          <div className="two-col"><label className="field"><span>Signatory name</span><input value={signatory} onChange={e=>{setSignatory(e.target.value);setSelectedProfile('')}} placeholder="Full name"/></label><label className="field"><span>Designation</span><input value={designation} onChange={e=>{setDesignation(e.target.value);setSelectedProfile('')}} placeholder="Role / designation"/></label></div>
+          <div className="two-col"><label className="field"><span>Signatory name</span><input value={signatory} onChange={e=>{setSignatory(e.target.value);setSelectedProfile('')}} placeholder="Enter signatory name"/></label><label className="field"><span>Designation</span><input value={designation} onChange={e=>{setDesignation(e.target.value);setSelectedProfile('')}} placeholder="Enter designation"/></label></div>
           <button className="secondary-button full-button" onClick={saveProfile}><Save size={15}/> Save current signature as profile</button>
           {profiles.length>0&&<div className="profile-list"><div className="section-label">SAVED PROFILES <span>{profiles.length}</span></div>{profiles.map(p=><div className="profile-row" key={p.id}><img src={p.image} alt=""/><div><strong>{p.name}</strong><span>{p.designation}</span></div><button className="icon-button danger" title={`Delete ${p.name}`} onClick={()=>deleteProfile(p.id)}><Trash2 size={15}/></button></div>)}</div>}
           <div className="inline-hint"><Check size={15}/> Signature profiles are stored in this browser, not uploaded to a server.</div>
