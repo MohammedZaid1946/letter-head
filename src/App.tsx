@@ -1,17 +1,27 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { AlignLeft, CalendarDays, Check, ChevronDown, Download, FileImage, FileText, ImagePlus, Move, Plus, Save, Signature, Trash2, Upload, X } from 'lucide-react';
+import { AlignLeft, CalendarDays, Check, ChevronDown, Download, FileImage, FileText, ImagePlus, Move, Save, Signature, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react';
+import {
+  A4_HEIGHT_PT,
+  A4_WIDTH_PT,
+  DEFAULT_BOUNDS,
+  DEFAULT_LIMITS,
+  computeLayout,
+  type LayoutConfig,
+} from './lib/documentLayout';
+import { autoAdjust, formatAdjustment } from './lib/autoAdjust';
 
 type SignatureProfile = { id: string; name: string; designation: string; image: string };
+type Tone = 'ok' | 'info' | 'warn';
+type AdjustStatus = { tone: Tone; title: string; details: string[] };
+type LayoutSnapshot = { fontPt: number; lineHeight: number; paragraphSpacingPt: number; bodyTopPct: number };
+
 const DEFAULT_TEMPLATE = '/assets/letterhead-template.jpg';
-const DEFAULT_SIGNATURE = '/assets/ma-saleem-signature.png';
-// Canonical document units are PDF points. A4 is 595.28 x 841.89 pt and every
-// editable value (font size, line height, offsets) is stored in points. The
-// preview renders the page as a container and expresses those point values in
-// `cqw` (1% of the A4 page width), so the background, text, date, reference and
-// signature all scale by the exact same factor as the exported PDF.
-const A4_WIDTH_PT = 595.28;
-const A4_HEIGHT_PT = 841.89;
+const DEFAULT_SIGNATURE_SRC = '/assets/ma-saleem-signature.png';
+const HEADING_GAP_PT = 14;
+// Canonical document units are PDF points. The preview renders the page as a
+// container and expresses point values in `cqw` (1% of the A4 page width), so
+// every element scales by the exact same factor as the exported PDF.
 const ptToPreviewSize = (pt: number) => `calc(100cqw * ${pt} / ${A4_WIDTH_PT})`;
 const today = () => new Date().toISOString().slice(0, 10);
 const initialBody = 'On behalf of the President, General Secretary, office bearers, and all members of the Telangana Amateur Body Builders and Fitness Association, Hyderabad, we extend our heartfelt wishes to Mr. George Joseph, Former Mr. India, who is currently recovering in the hospital.\n\nWe pray for his good health, strength, and a speedy recovery. May he regain his health soon and return to his normal life with renewed energy and positivity.\n\nOur thoughts and prayers are with him and his family during this time. We wish him a smooth recovery and many more healthy and happy years ahead.\n\nWishing you a speedy recovery, George Joseph Sir. Get well soon!';
@@ -24,8 +34,6 @@ const normalizeImage = async (file: File, png: boolean) => {
   context.drawImage(image, 0, 0); return canvas.toDataURL(png ? 'image/png' : 'image/jpeg', 0.94);
 };
 const formatDate = (date: string) => { if (!date) return ''; const [y,m,d] = date.split('-'); return `${d}/${m}/${y}`; };
-// Single source of truth for newline semantics: one \n is one line break, \n\n is one blank line.
-const splitLines = (value: string) => value.replace(/\r\n?/g, '\n').split('\n');
 
 export default function App() {
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
@@ -34,20 +42,24 @@ export default function App() {
   const [date, setDate] = useState(today());
   const [heading, setHeading] = useState('Best Wishes for a Speedy Recovery');
   const [body, setBody] = useState(initialBody);
-  const [closing, setClosing] = useState('With best wishes, President & General Secretary Telangana Amateur Body Builders and Fitness Association Hyderabad');
   const [profiles, setProfiles] = useState<SignatureProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState('');
   const [signatureImage, setSignatureImage] = useState('');
+  const [signatureAspect, setSignatureAspect] = useState<number | null>(null);
   const [signatory, setSignatory] = useState('MA Saleem');
   const [designation, setDesignation] = useState('General Secretary TABBFAH');
-  const [sigX, setSigX] = useState(77);
-  const [sigY, setSigY] = useState(82);
+  const [sigX, setSigX] = useState(80);
+  const [sigY, setSigY] = useState(74);
   const [sigWidth, setSigWidth] = useState(13);
   const [bodyTop, setBodyTop] = useState(21.5);
   const [bodyLeft, setBodyLeft] = useState(33.5);
   const [bodyWidth, setBodyWidth] = useState(63);
   const [fontSize, setFontSize] = useState(10.5);
   const [titleSize, setTitleSize] = useState(13);
+  const [lineHeight, setLineHeight] = useState(1.35);
+  const [paragraphSpacing, setParagraphSpacing] = useState(0);
+  const [autoAdjustSnapshot, setAutoAdjustSnapshot] = useState<LayoutSnapshot | null>(null);
+  const [adjustStatus, setAdjustStatus] = useState<AdjustStatus | null>(null);
   const [showLayout, setShowLayout] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -67,7 +79,7 @@ export default function App() {
         }
       } else {
         // A signature crop was provided in the conversation. Offer it as a starter profile.
-        fetch(DEFAULT_SIGNATURE).then(r => r.blob()).then(blob => readFile(new File([blob], 'ma-saleem-signature.png', {type:'image/png'}))).then(image => {
+        fetch(DEFAULT_SIGNATURE_SRC).then(r => r.blob()).then(blob => readFile(new File([blob], 'ma-saleem-signature.png', {type:'image/png'}))).then(image => {
           const starter = { id: 'ma-saleem-starter', name: 'MA Saleem', designation: 'General Secretary TABBFAH', image };
           setProfiles([starter]); setSelectedProfile(starter.id); setSignatureImage(starter.image);
           localStorage.setItem('letterhead-signature-profiles-v1', JSON.stringify([starter]));
@@ -78,13 +90,70 @@ export default function App() {
 
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 4500); return () => window.clearTimeout(timer); }, [notice]);
 
-  const bodyLines = useMemo(() => splitLines(body), [body]);
-  const estimatedLines = useMemo(() => {
-    const charsPerLine = Math.max(28, Math.floor((bodyWidth / 100 * 595) / (fontSize * 0.52)));
-    const bodyLineCount = bodyLines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.trim().length / charsPerLine)), 0);
-    return bodyLineCount + (heading ? 2 : 0) + (closing ? 3 : 0);
-  }, [bodyLines, bodyWidth, fontSize, heading, closing]);
-  const overflowWarning = bodyTop + estimatedLines * (fontSize * 1.35 / 8.42) > 80;
+  // Derive the signature image aspect ratio (height / width) for proportional layout.
+  useEffect(() => {
+    if (!signatureImage) { setSignatureAspect(null); return; }
+    let cancelled = false;
+    imageFrom(signatureImage)
+      .then((image) => { if (!cancelled) setSignatureAspect(image.naturalHeight / image.naturalWidth); })
+      .catch(() => { if (!cancelled) setSignatureAspect(null); });
+    return () => { cancelled = true; };
+  }, [signatureImage]);
+
+  const layoutConfig = useMemo<LayoutConfig>(() => ({
+    content: { heading, body },
+    settings: {
+      bodyTopPct: bodyTop,
+      bodyLeftPct: bodyLeft,
+      bodyWidthPct: bodyWidth,
+      fontSizePt: fontSize,
+      headingSizePt: titleSize,
+      lineHeight,
+      paragraphSpacingPt: paragraphSpacing,
+    },
+    signature: { xPct: sigX, yPct: sigY, widthPct: sigWidth, name: signatory, designation, aspect: signatureAspect },
+    bounds: DEFAULT_BOUNDS,
+    limits: DEFAULT_LIMITS,
+  }), [heading, body, bodyTop, bodyLeft, bodyWidth, fontSize, titleSize, lineHeight, paragraphSpacing, sigX, sigY, sigWidth, signatory, designation, signatureAspect]);
+
+  const layout = useMemo(() => computeLayout(layoutConfig), [layoutConfig]);
+  const layoutIssues = useMemo(() => {
+    const issues: string[] = [];
+    if (layout.overflowPt > 0) issues.push('The body may run close to, or into, the protected footer.');
+    for (const collision of layout.collisions) issues.push(collision.detail);
+    return issues;
+  }, [layout]);
+
+  const clearAutoAdjustState = () => { setAutoAdjustSnapshot(null); setAdjustStatus(null); };
+
+  const runAutoAdjust = () => {
+    const outcome = autoAdjust(layoutConfig);
+    if (outcome.status === 'already-fits') {
+      setAdjustStatus({ tone: 'info', title: 'Already fits', details: [outcome.message] });
+      return;
+    }
+    if (outcome.status === 'cannot-fit') {
+      setAdjustStatus({ tone: 'warn', title: 'Could not fit safely', details: [outcome.message] });
+      return;
+    }
+    setAutoAdjustSnapshot({ fontPt: fontSize, lineHeight, paragraphSpacingPt: paragraphSpacing, bodyTopPct: bodyTop });
+    const next = outcome.config.settings;
+    setFontSize(next.fontSizePt);
+    setLineHeight(next.lineHeight);
+    setParagraphSpacing(next.paragraphSpacingPt);
+    setBodyTop(next.bodyTopPct);
+    setAdjustStatus({ tone: 'ok', title: 'Auto-adjusted successfully', details: outcome.adjustments.map(formatAdjustment) });
+  };
+
+  const undoAutoAdjust = () => {
+    if (!autoAdjustSnapshot) return;
+    setFontSize(autoAdjustSnapshot.fontPt);
+    setLineHeight(autoAdjustSnapshot.lineHeight);
+    setParagraphSpacing(autoAdjustSnapshot.paragraphSpacingPt);
+    setBodyTop(autoAdjustSnapshot.bodyTopPct);
+    setAutoAdjustSnapshot(null);
+    setAdjustStatus({ tone: 'info', title: 'Restored previous layout', details: [] });
+  };
 
   const onTemplateUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; if (!file) return;
@@ -143,48 +212,41 @@ export default function App() {
       page.drawImage(bg, { x:0, y:0, width:W, height:H });
       const regular = await pdf.embedFont(StandardFonts.Helvetica);
       const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-      const x = bodyLeft/100*W, width = bodyWidth/100*W;
-      let yTop = bodyTop/100*H;
+
+      // Use the exact same layout the preview renders.
+      const exportLayout = computeLayout(layoutConfig);
+      const x = exportLayout.bodyLeftPt;
+      const width = exportLayout.bodyWidthPt;
       const drawText = (text: string, top: number, size: number, font = regular, align: 'left'|'center'='left') => {
         const textWidth = font.widthOfTextAtSize(text, size);
         const tx = align === 'center' ? x + Math.max(0, (width-textWidth)/2) : x;
-        page.drawText(text, { x:tx, y:H-top-size, size, font, color:rgb(0.08,0.08,0.09), maxWidth:width });
+        page.drawText(text, { x:tx, y:H-top-size, size, font, color:rgb(0.08,0.08,0.09) });
       };
-      const wrap = (text: string, font: typeof regular, size: number) => {
-        const words = text.split(/\s+/); const lines: string[]=[]; let line='';
-        for (const word of words) { const next = line ? `${line} ${word}` : word; if (font.widthOfTextAtSize(next,size) > width && line) { lines.push(line); line=word; } else line=next; }
-        if (line) lines.push(line); return lines;
-      };
+
       if (reference.trim()) { page.drawText(reference.trim(), {x: 180, y: H-18/100*H-10, size:9, font:regular, color:rgb(.2,.2,.2)}); }
       // Date stays in the upper-right reference row; coordinates are relative to the A4 page.
       const dateText = formatDate(date);
       if (dateText) page.drawText(dateText, { x:W*0.89, y:H-16.7/100*H-9, size:9, font:bold, color:rgb(.12,.12,.12) });
-      if (heading.trim()) {
-        const lines = wrap(heading.trim(), bold, titleSize);
-        for (const line of lines) { drawText(line, yTop, titleSize, bold, 'center'); yTop += titleSize*1.25; }
-        yTop += 14;
+
+      exportLayout.heading.lines.forEach((line, index) => {
+        drawText(line, exportLayout.heading.topPt + index * exportLayout.heading.lineAdvancePt, exportLayout.headingSizePt, bold, 'center');
+      });
+      for (const line of exportLayout.body) {
+        if (line.blank) continue;
+        drawText(line.text, line.topPt, exportLayout.fontSizePt, regular);
       }
-      for (const line of bodyLines) {
-        // A blank source line consumes exactly one line height, nothing more.
-        if (!line.trim()) { yTop += fontSize*1.35; continue; }
-        for (const wrapped of wrap(line, regular, fontSize)) { drawText(wrapped, yTop, fontSize); yTop += fontSize*1.35; }
-      }
-      if (closing.trim()) {
-        yTop += fontSize*1.35;
-        for (const line of wrap(closing.trim(), regular, fontSize)) { drawText(line, yTop, fontSize); yTop += fontSize*1.35; }
-      }
-      if (signatureImage) {
-        const img = await imageFrom(signatureImage);
+
+      if (exportLayout.signature && signatureImage) {
+        const sig = exportLayout.signature;
         const data = signatureImage.split(',')[1]; const bytes = Uint8Array.from(atob(data), c=>c.charCodeAt(0));
         const embedded = signatureImage.startsWith('data:image/png') ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
-        const sigW = sigWidth/100*W; const sigH = sigW*(img.height/img.width);
-        const sx = sigX/100*W; const sy = H-(sigY/100*H)-sigH;
-        page.drawImage(embedded, {x:sx,y:sy,width:sigW,height:sigH});
-        const nameSize=9.5, desSize=7.5;
-        const nameW=bold.widthOfTextAtSize(signatory,nameSize); const desW=regular.widthOfTextAtSize(designation,desSize);
-        page.drawText(signatory,{x:sx+Math.max(0,(sigW-nameW)/2),y:sy-12,size:nameSize,font:bold,color:rgb(.05,.05,.05)});
-        page.drawText(designation,{x:sx+Math.max(0,(sigW-desW)/2),y:sy-22,size:desSize,font:regular,color:rgb(.05,.05,.05)});
+        page.drawImage(embedded, { x:sig.xPt, y:H-sig.topPt-sig.heightPt, width:sig.widthPt, height:sig.heightPt });
+        const nameWidth = bold.widthOfTextAtSize(sig.name.text, sig.name.sizePt);
+        const desWidth = regular.widthOfTextAtSize(sig.designation.text, sig.designation.sizePt);
+        page.drawText(sig.name.text, { x:sig.xPt+Math.max(0,(sig.widthPt-nameWidth)/2), y:H-sig.name.bottomPt, size:sig.name.sizePt, font:bold, color:rgb(.05,.05,.05) });
+        page.drawText(sig.designation.text, { x:sig.xPt+Math.max(0,(sig.widthPt-desWidth)/2), y:H-sig.designation.bottomPt, size:sig.designation.sizePt, font:regular, color:rgb(.05,.05,.05) });
       }
+
       const bytes = await pdf.save(); const blob = new Blob([bytes as BlobPart], {type:'application/pdf'}); const url=URL.createObjectURL(blob);
       const a=document.createElement('a'); a.href=url; a.download=`letter-${date || 'undated'}.pdf`; a.click(); URL.revokeObjectURL(url); setNotice('PDF exported. Check the result before printing or sending.');
     } catch (error) { console.error(error); setNotice('PDF export failed. Try re-uploading the letterhead as a standard JPEG or PNG.'); }
@@ -201,9 +263,8 @@ export default function App() {
         {activeTab==='content' && <div className="form-section">
           <div className="two-col"><label className="field"><span>Reference number <em>Optional</em></span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="e.g. TABBFAH/2026/014"/></label><label className="field"><span><CalendarDays size={14}/> Date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label></div>
           <label className="field"><span>Subject / heading</span><input value={heading} onChange={e=>setHeading(e.target.value)} placeholder="Enter letter heading"/></label>
-          <label className="field"><span>Letter body <em>{body.length} characters</em></span><textarea value={body} onChange={e=>setBody(e.target.value)} rows={9} placeholder="Write the letter body. Separate paragraphs with a blank line."/></label>
-          <label className="field"><span>Closing statement</span><textarea value={closing} onChange={e=>setClosing(e.target.value)} rows={3} placeholder="With best wishes..."/></label>
-          {overflowWarning && <div className="warning"><span>!</span><div><strong>Possible content overflow</strong><p>The current body length may run close to the footer. Check the preview and adjust font size or content width in Layout.</p></div></div>}
+          <label className="field"><span>Letter body <em>{body.length} characters</em></span><textarea value={body} onChange={e=>setBody(e.target.value)} rows={10} placeholder="Write the letter body. Separate paragraphs with a blank line."/></label>
+          {layoutIssues.length>0 && <div className="warning"><span>!</span><div><strong>Possible content overflow</strong><p>{layoutIssues.join(' ')} Use Auto Adjust or review the Layout settings.</p></div></div>}
           <div className="inline-hint"><Check size={15}/> Paragraphs wrap automatically. The original template artwork is not edited.</div>
         </div>}
         {activeTab==='signature' && <div className="form-section">
@@ -215,16 +276,19 @@ export default function App() {
           <div className="inline-hint"><Check size={15}/> Signature profiles are stored in this browser, not uploaded to a server.</div>
         </div>}
         {activeTab==='layout' && <div className="form-section">
-          <div className="layout-intro"><strong>Fine-tune the overlay</strong><p>Adjust these settings until the content fits the blank area on your letterhead. Changes update the preview immediately.</p></div>
-          <label className="range-field"><span>Body starts from top <b>{bodyTop.toFixed(1)}%</b></span><input type="range" min="16" max="34" step="0.5" value={bodyTop} onChange={e=>setBodyTop(Number(e.target.value))}/></label>
-          <label className="range-field"><span>Left margin <b>{bodyLeft.toFixed(1)}%</b></span><input type="range" min="25" max="40" step="0.5" value={bodyLeft} onChange={e=>setBodyLeft(Number(e.target.value))}/></label>
-          <label className="range-field"><span>Body width <b>{bodyWidth}%</b></span><input type="range" min="45" max="68" step="1" value={bodyWidth} onChange={e=>setBodyWidth(Number(e.target.value))}/></label>
-          <div className="two-col"><label className="field"><span>Body font (pt)</span><input type="number" min="7" max="14" step="0.5" value={fontSize} onChange={e=>setFontSize(Math.min(14,Math.max(7,Number(e.target.value)||7)))}/></label><label className="field"><span>Heading font (pt)</span><input type="number" min="9" max="20" step="0.5" value={titleSize} onChange={e=>setTitleSize(Math.min(20,Math.max(9,Number(e.target.value)||9)))}/></label></div>
+          <div className="layout-intro"><strong>Fine-tune the overlay</strong><p>Adjust these settings until the content fits the blank area on your letterhead, or let Auto Adjust do it for you.</p></div>
+          <button className="primary-button full-button auto-adjust-button" onClick={runAutoAdjust}><Sparkles size={15}/> Auto Adjust to fit content</button>
+          <label className="range-field"><span>Body starts from top <b>{bodyTop.toFixed(1)}%</b></span><input type="range" min="16" max="34" step="0.5" value={bodyTop} onChange={e=>{setBodyTop(Number(e.target.value));clearAutoAdjustState();}}/></label>
+          <label className="range-field"><span>Left margin <b>{bodyLeft.toFixed(1)}%</b></span><input type="range" min="25" max="40" step="0.5" value={bodyLeft} onChange={e=>{setBodyLeft(Number(e.target.value));clearAutoAdjustState();}}/></label>
+          <label className="range-field"><span>Body width <b>{bodyWidth}%</b></span><input type="range" min="45" max="68" step="1" value={bodyWidth} onChange={e=>{setBodyWidth(Number(e.target.value));clearAutoAdjustState();}}/></label>
+          <label className="range-field"><span>Line spacing <b>{lineHeight.toFixed(2)}×</b></span><input type="range" min="1.1" max="1.6" step="0.05" value={lineHeight} onChange={e=>{setLineHeight(Number(e.target.value));clearAutoAdjustState();}}/></label>
+          <label className="range-field"><span>Paragraph spacing <b>{paragraphSpacing.toFixed(1)} pt</b></span><input type="range" min="0" max="12" step="0.5" value={paragraphSpacing} onChange={e=>{setParagraphSpacing(Number(e.target.value));clearAutoAdjustState();}}/></label>
+          <div className="two-col"><label className="field"><span>Body font (pt)</span><input type="number" min="7" max="14" step="0.5" value={fontSize} onChange={e=>{setFontSize(Math.min(14,Math.max(7,Number(e.target.value)||7)));clearAutoAdjustState();}}/></label><label className="field"><span>Heading font (pt)</span><input type="number" min="9" max="20" step="0.5" value={titleSize} onChange={e=>setTitleSize(Math.min(20,Math.max(9,Number(e.target.value)||9)))}/></label></div>
           <div className="section-label">SIGNATURE POSITION</div>
           <label className="range-field"><span>Horizontal position <b>{sigX.toFixed(0)}%</b></span><input type="range" min="48" max="87" value={sigX} onChange={e=>setSigX(Number(e.target.value))}/></label>
           <label className="range-field"><span>Vertical position <b>{sigY.toFixed(0)}%</b></span><input type="range" min="60" max="89" value={sigY} onChange={e=>setSigY(Number(e.target.value))}/></label>
           <label className="range-field"><span>Signature width <b>{sigWidth}%</b></span><input type="range" min="8" max="22" value={sigWidth} onChange={e=>setSigWidth(Number(e.target.value))}/></label>
-          <button className="secondary-button full-button" onClick={()=>{setBodyTop(21.5);setBodyLeft(33.5);setBodyWidth(63);setFontSize(10.5);setTitleSize(13);setSigX(77);setSigY(82);setSigWidth(13);}}>Reset layout to defaults</button>
+          <button className="secondary-button full-button" onClick={()=>{setBodyTop(21.5);setBodyLeft(33.5);setBodyWidth(63);setFontSize(10.5);setTitleSize(13);setLineHeight(1.35);setParagraphSpacing(0);setSigX(80);setSigY(74);setSigWidth(13);clearAutoAdjustState();}}>Reset layout to defaults</button>
         </div>}
         <div className="editor-footer"><span><span className="privacy-dot"/> Runs in your browser</span><button className="text-button" onClick={()=>setShowLayout(v=>!v)}>{showLayout?'Hide':'Show'} layout notes</button></div>
         {showLayout&&<div className="layout-notes"><strong>Template note</strong><p>The starter letterhead is cropped from the image you supplied to remove the black bars around the page. Since it is a scan, text and logos are raster artwork. For the sharpest print result, replace it with a clean, blank, high-resolution scan or original PDF artwork converted to an image.</p></div>}
@@ -232,13 +296,15 @@ export default function App() {
       <section className="preview-panel"><div className="preview-heading"><div><p className="eyebrow">LIVE PREVIEW</p><h2>Document preview</h2></div><span className="page-size">A4 · Portrait</span></div><div className="preview-stage"><div className="paper" ref={pageRef} style={{backgroundImage:`url(${template})`}}>
         {reference.trim()&&<div className="preview-ref" style={{left:'30%',top:'16.7%'}}>Ref: {reference}</div>}
         <div className="preview-date"><strong>{formatDate(date)}</strong></div>
-        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${bodyTop}%`,width:`${bodyWidth}%`,fontSize:ptToPreviewSize(fontSize)}}>
-          {heading.trim()&&<h3 style={{fontSize:ptToPreviewSize(titleSize)}}>{heading}</h3>}
-          <div className="body-lines">{bodyLines.map((line,i)=><div className="body-line" key={i}>{line}</div>)}</div>
-          {closing.trim()&&<div className="closing-preview">{closing}</div>}
+        <div className="preview-content" style={{left:`${bodyLeft}%`,top:`${bodyTop}%`,width:`${bodyWidth}%`,fontSize:ptToPreviewSize(fontSize),lineHeight}}>
+          {layout.heading.lines.length>0&&<div className="preview-heading-lines" style={{fontSize:ptToPreviewSize(titleSize),lineHeight:1.25,marginBottom:ptToPreviewSize(HEADING_GAP_PT)}}>{layout.heading.lines.map((line,i)=><div className="preview-heading-line" key={i}>{line}</div>)}</div>}
+          <div className="body-lines">{layout.body.map((line,i)=><div className="body-line" key={i} style={line.spacingBeforePt>0?{marginTop:ptToPreviewSize(line.spacingBeforePt)}:undefined}>{line.text===''?'\u00A0':line.text}</div>)}</div>
         </div>
         {signatureImage&&<div ref={sigRef} className={`signature-overlay ${dragging?'dragging':''}`} style={{left:`${sigX}%`,top:`${sigY}%`,width:`${sigWidth}%`}} onPointerDown={startDrag} onPointerMove={moveSignature} onPointerUp={()=>setDragging(false)} onPointerCancel={()=>setDragging(false)} title="Drag to reposition signature"><img src={signatureImage} alt="Signature"/><strong>{signatory}</strong><span>{designation}</span><div className="drag-chip"><Move size={10}/> Drag</div></div>}
-      </div></div><div className="preview-controls"><div className="preview-tip"><Move size={15}/><span>Drag the signature on the page to reposition it.</span></div><button className="primary-button export-wide" onClick={exportPdf} disabled={exporting}><Download size={16}/>{exporting?'Generating PDF…':'Download print-ready PDF'}</button></div><div className="preview-disclaimer"><span className="info-dot">i</span><p>Preview is scaled to fit your screen. Always open the exported PDF once before printing to verify text fit, date placement, and signature alignment.</p></div></section>
+      </div></div>
+      <div className="preview-controls"><div className="preview-actions"><button className="secondary-button auto-adjust-button" onClick={runAutoAdjust}><Sparkles size={15}/> Auto Adjust</button>{autoAdjustSnapshot&&<button className="text-button undo-button" onClick={undoAutoAdjust}><Undo2 size={14}/> Undo Auto Adjust</button>}</div><button className="primary-button export-wide" onClick={exportPdf} disabled={exporting}><Download size={16}/>{exporting?'Generating PDF…':'Download print-ready PDF'}</button></div>
+      {adjustStatus&&<div className={`adjust-status ${adjustStatus.tone}`}><strong>{adjustStatus.title}</strong>{adjustStatus.details.length>0&&<ul>{adjustStatus.details.map((d,i)=><li key={i}>{d}</li>)}</ul>}</div>}
+      <div className="preview-disclaimer"><span className="info-dot">i</span><p>Preview is scaled to fit your screen. Always open the exported PDF once before printing to verify text fit, date placement, and signature alignment.</p></div></section>
     </main>
     {notice&&<div className="toast" role="status"><span>{notice}</span><button onClick={()=>setNotice('')}><X size={15}/></button></div>}
     <footer className="app-footer">Letterhead Studio <span>•</span> Template and signatures remain in your browser unless you export the PDF.</footer>
